@@ -7,12 +7,12 @@
 -->
 
 <p align="center">
-  <img src="dist/branding/lichii_icon_with_logo.png" alt="Lichii" width="600">
+  <img src="dist/branding/chata_logo.png" alt="Chata" width="600".>
 </p>
 
-# Lichii
+# Chata
 
-Lichii is an experimental, open-source Nintendo Switch and Switch 2 emulator written in C++. It builds on Eglantine, Eden, yuzu and Sudachi, preserving their contributions while developing this fork's game compatibility and renderer fixes.
+Chata is an experimental, open-source Nintendo Switch and Switch 2 emulator written in C++. It builds on Eglantine, Eden, yuzu and Sudachi, preserving their contributions while developing this fork's game compatibility and renderer fixes.
 
 This is an independent fork, not an official release of those upstream projects. Lichii is not affiliated with Nintendo.
 

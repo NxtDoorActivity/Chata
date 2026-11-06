@@ -46,9 +46,9 @@ env:
   # Names that the rebrand will change. Keep these in sync with CMakeLists.txt.
   APP_BIN: lichii
   CLI_BIN: eden-cli
-  DESKTOP_FILE: dist/io.github.zortos293.lichii.desktop
-  ICON_SRC: dist/lichii.png
-  ICON_ID: io.github.zortos293.lichii
+  DESKTOP_FILE: dist/io.github.nxtdooractivity.chata.desktop
+  ICON_SRC: dist/chata.png
+  ICON_ID: io.github.nxtdooractivity.chata
   RELEASE_PREFIX: chata
 
   # Packaging tools. "continuous" always fetches the newest build, which can change

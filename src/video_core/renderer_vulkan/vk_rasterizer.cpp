@@ -1399,6 +1399,7 @@ void RasterizerVulkan::DispatchCompute() {
     };
     scheduler.Record([](vk::CommandBuffer cmdbuf) { cmdbuf.PipelineBarrier(vk::PIPELINE_STAGE_GRAPHICS_COMPUTE_TRANSFER, VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT,
                                0, READ_BARRIER); });
+    kepler_compute->TraceComputeCensus(pipeline->ShaderHash());
     scheduler.TraceComputePipeline(pipeline->ShaderHash());
     scheduler.Record([this, pipeline, dim, byte_addressed_shadow](vk::CommandBuffer cmdbuf) {
         if (!pipeline->IsBound()) {

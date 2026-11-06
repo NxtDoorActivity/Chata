@@ -61,7 +61,7 @@ env:
 
   # The upstream Lichii commit this fork's patch series is based on. Shown in the
   # release notes. Fill it in when you cut a release.
-  UPSTREAM_BASE_SHA: "5a50f50e0b7ea0cb0e71c4ae8e8e7425c8a3069c"
+  UPSTREAM_BASE_SHA: "b06d1818eeec9ab13f0df9822b58aef50a601483"
 
 # A running build is never cancelled; a newer dispatch waits for it.
 concurrency:

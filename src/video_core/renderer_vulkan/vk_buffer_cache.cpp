@@ -6,6 +6,11 @@
 
 #include <algorithm>
 #include <array>
+#include <chrono>
+#include <map>
+#include <mutex>
+#include <source_location>
+#include <string>
 #include <cstring>
 #include <cstdlib>
 #include <span>
@@ -512,12 +517,73 @@ bool BufferCacheRuntime::CanReorderUpload(const Buffer& buffer,
     return can_use_upload_cmdbuf;
 }
 
+namespace {
+// EDEN_NX2_COPY_TRACE=1: once a second, logs which call sites issue buffer copies and on which
+// path (R = reorderable upload command buffer, B = barriered copy that ends the render pass,
+// N = copy without barriers). Diagnostics only.
+struct CopyTraceEntry {
+    u64 calls{};
+    u64 bytes{};
+    u64 copies{};
+    char path{'?'};
+    const char* function{};
+};
+void TraceBufferCopy(const std::source_location& loc, std::span<const VideoCommon::BufferCopy> copies,
+                     char path) {
+    static const bool enabled{std::getenv("EDEN_NX2_COPY_TRACE") != nullptr};
+    if (!enabled) {
+        return;
+    }
+    static std::mutex mutex;
+    static std::map<std::pair<u32, char>, CopyTraceEntry> entries;
+    static auto next{std::chrono::steady_clock::now() + std::chrono::seconds{1}};
+    static u64 frames{};
+    std::scoped_lock lock{mutex};
+    auto& entry{entries[{loc.line(), path}]};
+    entry.path = path;
+    entry.function = loc.function_name();
+    ++entry.calls;
+    entry.copies += copies.size();
+    for (const auto& copy : copies) {
+        entry.bytes += copy.size;
+    }
+    const auto now{std::chrono::steady_clock::now()};
+    if (now < next) {
+        return;
+    }
+    next = now + std::chrono::seconds{1};
+    std::vector<std::pair<std::pair<u32, char>, CopyTraceEntry>> sorted(entries.begin(),
+                                                                         entries.end());
+    std::ranges::sort(sorted, std::greater<>{},
+                      [](const auto& e) { return e.second.calls; });
+    std::string text;
+    u64 total{};
+    for (const auto& [key, e] : sorted) {
+        total += e.calls;
+    }
+    int shown{};
+    for (const auto& [key, e] : sorted) {
+        if (shown++ == 8) {
+            break;
+        }
+        text += fmt::format(" line{}[{}]={}calls/{}copies/{}KiB", key.first, key.second, e.calls,
+                            e.copies, e.bytes / 1024);
+    }
+    LOG_INFO(Render_Vulkan, "COPYTRACE total_calls={} (last second):{}", total, text);
+    entries.clear();
+    ++frames;
+}
+} // namespace
+
 void BufferCacheRuntime::CopyBuffer(VkBuffer dst_buffer, VkBuffer src_buffer,
                                     std::span<const VideoCommon::BufferCopy> copies, bool barrier,
-                                    bool can_reorder_upload) {
+                                    bool can_reorder_upload, std::source_location loc) {
     if (dst_buffer == VK_NULL_HANDLE || src_buffer == VK_NULL_HANDLE) {
         return;
     }
+    TraceBufferCopy(loc, copies,
+                    (src_buffer == staging_pool.StreamBuf() && can_reorder_upload) ? 'R'
+                    : barrier ? 'B' : 'N');
     static constexpr VkMemoryBarrier READ_BARRIER{
         .sType = VK_STRUCTURE_TYPE_MEMORY_BARRIER,
         .pNext = nullptr,

@@ -247,6 +247,7 @@ public:
     bool IsNativeMode() const { return native_mode; }
     bool ProcessGameDlss(u64 program_id, u64 native_key);
     void TraceDlssContract(u64 native_key, bool warn_unvalidated = true);
+    void TraceComputeCensus(u64 program_id, u64 native_key);
 
     /// GPU thread split with macros on its front half (gpu_split.h, EDEN_NX2_SPLIT=2), called by
     /// the front instead of CallMethod for native compute engines: runs their macros and macro
@@ -313,6 +314,7 @@ private:
     std::optional<Texture::TICEntry> dlss_motion_vectors;
     std::optional<Texture::TICEntry> dlss_depth;
     u32 dlss_contract_trace_count{};
+    u32 compute_census_count{};
     GPUVAddr dlss_motion_color{};
     VideoCommon::FireEmblemUpscale::FrameJitter fe_upscale_jitter;
     bool ProcessNativeMethod(Core::System& system, u32 method, u32 argument, bool is_last_call);

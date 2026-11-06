@@ -1002,6 +1002,62 @@ void KeplerCompute::TraceDlssContract(u64 native_key, bool warn_unvalidated) {
     }
 }
 
+// EDEN_NX2_COMPUTE_CENSUS=<count>: logs the shape of the next <count> native compute dispatches
+// (program key, grid, block, and every texture/image handle found in constant buffer 0). Only
+// sizes, formats and addresses are logged, never program code or game data.
+// EDEN_NX2_COMPUTE_CENSUS_SKIP=<n> skips the first n dispatches (default 2000: past the loading
+// screens, into steady 3D rendering).
+void KeplerCompute::TraceComputeCensus(u64 program_id, u64 native_key) {
+    static const u32 limit = [] {
+        const char* value = std::getenv("EDEN_NX2_COMPUTE_CENSUS");
+        return value ? static_cast<u32>(std::min<unsigned long>(std::strtoul(value, nullptr, 10), 4096UL)) : 0U;
+    }();
+    if (limit == 0) {
+        return;
+    }
+    static const u32 skip = [] {
+        const char* value = std::getenv("EDEN_NX2_COMPUTE_CENSUS_SKIP");
+        return value ? static_cast<u32>(std::min<unsigned long>(std::strtoul(value, nullptr, 10), 1000000UL)) : 2000U;
+    }();
+    if (compute_census_count >= skip + limit) {
+        return;
+    }
+    if (compute_census_count++ < skip) {
+        return;
+    }
+    LOG_INFO(HW_GPU, "COMPUTE census #{} program={:016x} key={:016x} grid={}x{}x{} block={}x{}x{} shared={:#x}",
+             compute_census_count - skip - 1, program_id, native_key,
+             launch_description.grid_dim_x.Value(), launch_description.grid_dim_y.Value(),
+             launch_description.grid_dim_z.Value(), launch_description.block_dim_x.Value(),
+             launch_description.block_dim_y.Value(), launch_description.block_dim_z.Value(),
+             launch_description.shared_alloc.Value());
+    const auto& cbuf = launch_description.const_buffer_config[0];
+    const GPUVAddr address = (GPUVAddr{cbuf.address_high} << 32) | cbuf.address_low;
+    const u32 bytes = std::min<u32>(cbuf.size.Value(), 0x800U);
+    if (!(launch_description.const_buffer_enable_mask & 1) || bytes < 4 ||
+        !memory_manager.IsFullyMappedRange(address, bytes)) {
+        return;
+    }
+    for (u32 offset = 0; offset + 4 <= bytes; offset += 4) {
+        const u32 handle = memory_manager.Read<u32>(address + offset);
+        const u32 index = handle & 0xfffff;
+        const GPUVAddr tic_address = regs.tic.Address() + u64{index} * sizeof(Texture::TICEntry);
+        if (!handle || index > regs.tic.limit ||
+            !memory_manager.IsFullyMappedRange(tic_address, sizeof(Texture::TICEntry))) {
+            continue;
+        }
+        const auto tic = GetTICEntry(index);
+        if (tic.Address() == 0 || tic.Width() == 0 || tic.Height() == 0) {
+            continue;
+        }
+        std::array<u32, sizeof(Texture::TICEntry) / sizeof(u32)> words{};
+        std::memcpy(words.data(), &tic, sizeof(tic));
+        LOG_INFO(HW_GPU, "COMPUTE census   cb0+{:03x}={:08x}: tic={} addr={:#x} {}x{} raw={:08x}",
+                 offset, handle, index, tic.Address(), tic.Width(), tic.Height(),
+                 fmt::join(words, " "));
+    }
+}
+
 bool KeplerCompute::TryFireEmblemUpscale(bool allow_history) {
     using namespace VideoCommon::FireEmblemUpscale;
     static const bool requested_history = [] {

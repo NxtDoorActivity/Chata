@@ -1401,15 +1401,73 @@ void RasterizerVulkan::DispatchCompute() {
                                0, READ_BARRIER); });
     kepler_compute->TraceComputeCensus(pipeline->ShaderHash());
     scheduler.TraceComputePipeline(pipeline->ShaderHash());
-    scheduler.Record([this, pipeline, dim, byte_addressed_shadow](vk::CommandBuffer cmdbuf) {
+    struct FastBlit {
+        VkImage src{};
+        VkImage dst{};
+        VkImageSubresourceLayers src_layers{};
+        VkImageSubresourceLayers dst_layers{};
+        VkOffset3D src_extent{};
+        VkOffset3D dst_extent{};
+        bool valid{};
+    } fast_blit;
+    if (const auto& fast{pipeline->FastUpscale()}; fast && !byte_addressed_shadow) {
+        const ImageView& src_view{texture_cache.GetImageView(fast->src)};
+        const ImageView& dst_view{texture_cache.GetImageView(fast->dst)};
+        if (src_view.ImageHandle() != VK_NULL_HANDLE && dst_view.ImageHandle() != VK_NULL_HANDLE) {
+            fast_blit.src = src_view.ImageHandle();
+            fast_blit.dst = dst_view.ImageHandle();
+            fast_blit.src_layers = {VK_IMAGE_ASPECT_COLOR_BIT,
+                                    static_cast<u32>(src_view.range.base.level),
+                                    static_cast<u32>(src_view.range.base.layer), 1};
+            fast_blit.dst_layers = {VK_IMAGE_ASPECT_COLOR_BIT,
+                                    static_cast<u32>(dst_view.range.base.level),
+                                    static_cast<u32>(dst_view.range.base.layer), 1};
+            fast_blit.src_extent = {static_cast<s32>(src_view.size.width),
+                                    static_cast<s32>(src_view.size.height), 1};
+            fast_blit.dst_extent = {static_cast<s32>(dst_view.size.width),
+                                    static_cast<s32>(dst_view.size.height), 1};
+            fast_blit.valid = true;
+        }
+    }
+    scheduler.Record([this, pipeline, dim, byte_addressed_shadow, fast_blit](vk::CommandBuffer cmdbuf) {
         if (!pipeline->IsBound()) {
             return;
         }
         if (byte_addressed_shadow) {
             TextureCacheRuntime::CopyByteAddressedShadow(cmdbuf, *byte_addressed_shadow, false);
         }
+        if (fast_blit.valid) {
+            // Experimental: replace the heavy upscaler pass with a plain linear blit.
+            static constexpr VkMemoryBarrier TO_TRANSFER{
+                .sType = VK_STRUCTURE_TYPE_MEMORY_BARRIER,
+                .pNext = nullptr,
+                .srcAccessMask = VK_ACCESS_MEMORY_WRITE_BIT,
+                .dstAccessMask = VK_ACCESS_TRANSFER_READ_BIT | VK_ACCESS_TRANSFER_WRITE_BIT,
+            };
+            static constexpr VkMemoryBarrier FROM_TRANSFER{
+                .sType = VK_STRUCTURE_TYPE_MEMORY_BARRIER,
+                .pNext = nullptr,
+                .srcAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT,
+                .dstAccessMask = VK_ACCESS_MEMORY_READ_BIT | VK_ACCESS_MEMORY_WRITE_BIT,
+            };
+            VkImageBlit region{
+                .srcSubresource = fast_blit.src_layers,
+                .srcOffsets = {{0, 0, 0}, fast_blit.src_extent},
+                .dstSubresource = fast_blit.dst_layers,
+                .dstOffsets = {{0, 0, 0}, fast_blit.dst_extent},
+            };
+            scheduler.TraceGpuWork(cmdbuf, pipeline->ShaderHash(), 0, dim, [&] {
+                cmdbuf.PipelineBarrier(VK_PIPELINE_STAGE_ALL_COMMANDS_BIT,
+                                       VK_PIPELINE_STAGE_TRANSFER_BIT, 0, TO_TRANSFER);
+                cmdbuf.BlitImage(fast_blit.src, VK_IMAGE_LAYOUT_GENERAL, fast_blit.dst,
+                                 VK_IMAGE_LAYOUT_GENERAL, region, VK_FILTER_LINEAR);
+                cmdbuf.PipelineBarrier(VK_PIPELINE_STAGE_TRANSFER_BIT,
+                                       VK_PIPELINE_STAGE_ALL_COMMANDS_BIT, 0, FROM_TRANSFER);
+            });
+        } else {
         scheduler.TraceGpuWork(cmdbuf, pipeline->ShaderHash(), 0, dim,
                                [&] { cmdbuf.Dispatch(dim[0], dim[1], dim[2]); });
+        }
         if (byte_addressed_shadow) {
             TextureCacheRuntime::CopyByteAddressedShadow(cmdbuf, *byte_addressed_shadow, true);
         }

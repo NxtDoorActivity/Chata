@@ -305,6 +305,17 @@ private:
     MemoryAllocator& memory_allocator;
     Scheduler& scheduler;
     StagingBufferPool& staging_pool;
+    // EDEN_NX2_COPY_CHAIN: barriered upload copies recorded back to back (nothing recorded in
+    // between: Scheduler::RecordSerial) share one leading barrier when their destinations are
+    // disjoint. The serial after the last such copy, and the destinations written since the
+    // chain's barrier.
+    struct CopyChainRange {
+        VkBuffer dst;
+        u64 begin;
+        u64 end;
+    };
+    u64 copy_chain_serial{~u64{}};
+    boost::container::small_vector<CopyChainRange, 32> copy_chain_ranges;
     GuestDescriptorQueue& guest_descriptor_queue;
 
     std::shared_ptr<QuadArrayIndexBuffer> quad_array_index_buffer;

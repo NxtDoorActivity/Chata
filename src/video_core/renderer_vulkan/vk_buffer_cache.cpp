@@ -6,6 +6,7 @@
 
 #include <algorithm>
 #include <array>
+#include <atomic>
 #include <chrono>
 #include <map>
 #include <mutex>
@@ -521,6 +522,7 @@ namespace {
 // EDEN_NX2_COPY_TRACE=1: once a second, logs which call sites issue buffer copies and on which
 // path (R = reorderable upload command buffer, B = barriered copy that ends the render pass,
 // N = copy without barriers). Diagnostics only.
+std::atomic<u64> g_copy_chain_skips{};
 struct CopyTraceEntry {
     u64 calls{};
     u64 bytes{};
@@ -569,7 +571,8 @@ void TraceBufferCopy(const std::source_location& loc, std::span<const VideoCommo
         text += fmt::format(" line{}[{}]={}calls/{}copies/{}KiB", key.first, key.second, e.calls,
                             e.copies, e.bytes / 1024);
     }
-    LOG_INFO(Render_Vulkan, "COPYTRACE total_calls={} (last second):{}", total, text);
+    LOG_INFO(Render_Vulkan, "COPYTRACE total_calls={} chain_skipped_barriers={} (last second):{}",
+             total, g_copy_chain_skips.exchange(0, std::memory_order_relaxed), text);
     entries.clear();
     ++frames;
 }
@@ -609,8 +612,49 @@ void BufferCacheRuntime::CopyBuffer(VkBuffer dst_buffer, VkBuffer src_buffer,
     }
 
     scheduler.RequestOutsideRenderPassOperationContext();
-    scheduler.Record([src_buffer, dst_buffer, vk_copies, barrier](vk::CommandBuffer cmdbuf) {
-        if (barrier) {
+    // EDEN_NX2_COPY_CHAIN=1: a barriered copy from the stream buffer that directly follows the
+    // previous one (no command recorded in between) skips its leading barrier. The previous
+    // copy's leading barrier already orders it after everything recorded earlier (its second
+    // scope covers all later transfers), and the sources are host-written staging data. The one
+    // hazard left is two writes to the same bytes, so a copy overlapping a destination written
+    // since the chain's barrier starts a new chain with its own barrier.
+    static const bool chain_enabled{std::getenv("EDEN_NX2_COPY_CHAIN") != nullptr};
+    bool skip_pre_barrier{};
+    if (chain_enabled && barrier && src_buffer == staging_pool.StreamBuf()) {
+        const bool chained = scheduler.RecordSerial() == copy_chain_serial &&
+                             copy_chain_ranges.size() + vk_copies.size() <= 256;
+        bool overlaps{};
+        if (chained) {
+            for (const VkBufferCopy& copy : vk_copies) {
+                const u64 begin = copy.dstOffset;
+                const u64 end = copy.dstOffset + copy.size;
+                for (const CopyChainRange& range : copy_chain_ranges) {
+                    if (range.dst == dst_buffer && begin < range.end && range.begin < end) {
+                        overlaps = true;
+                        break;
+                    }
+                }
+                if (overlaps) {
+                    break;
+                }
+            }
+        }
+        skip_pre_barrier = chained && !overlaps;
+        if (!skip_pre_barrier) {
+            copy_chain_ranges.clear();
+        }
+        for (const VkBufferCopy& copy : vk_copies) {
+            copy_chain_ranges.push_back({dst_buffer, copy.dstOffset, copy.dstOffset + copy.size});
+        }
+        if (skip_pre_barrier) {
+            g_copy_chain_skips.fetch_add(1, std::memory_order_relaxed);
+        }
+    } else {
+        copy_chain_ranges.clear();
+    }
+    scheduler.Record([src_buffer, dst_buffer, vk_copies, barrier,
+                      skip_pre_barrier](vk::CommandBuffer cmdbuf) {
+        if (barrier && !skip_pre_barrier) {
             cmdbuf.PipelineBarrier(vk::PIPELINE_STAGE_GRAPHICS_COMPUTE_TRANSFER,
                                    VK_PIPELINE_STAGE_TRANSFER_BIT, 0, READ_BARRIER);
         }
@@ -620,6 +664,7 @@ void BufferCacheRuntime::CopyBuffer(VkBuffer dst_buffer, VkBuffer src_buffer,
                                    vk::PIPELINE_STAGE_GRAPHICS_COMPUTE, 0, WRITE_BARRIER);
         }
     });
+    copy_chain_serial = scheduler.RecordSerial();
 }
 
 void BufferCacheRuntime::PreCopyBarrier() {

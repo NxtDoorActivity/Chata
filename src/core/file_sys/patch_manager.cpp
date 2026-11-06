@@ -5,6 +5,7 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 
 #include <algorithm>
+#include <cstdlib>
 #include <array>
 #include <cstddef>
 #include <cstring>
@@ -61,7 +62,13 @@ struct BuiltinPatch {
     std::span<const BuiltinPatchRecord> records;
     size_t state_offset = 0;
     size_t state_size = 0;
+    /// When set, the patch exists only while this environment variable is set (opt-in).
+    const char* opt_in_env = nullptr;
 };
+
+bool BuiltinPatchAvailable(const BuiltinPatch& patch) {
+    return patch.opt_in_env == nullptr || std::getenv(patch.opt_in_env) != nullptr;
+}
 
 constexpr std::array<u8, 4> MAX_RESOLUTION_ORIGINAL{0xE8, 0x41, 0x00, 0x36};
 constexpr std::array<u8, 4> MAX_RESOLUTION_BRANCH{0x0F, 0x02, 0x00, 0x14};
@@ -86,6 +93,19 @@ constexpr std::array DYNAMIC_FPS_RECORDS{
     BuiltinPatchRecord{0x3C46200, DYNAMIC_FPS_ROUTINE, {}, true},
 };
 
+// Native zstd (from sharkiix's Lichii fork, GPL-3.0): the game decompresses zstd data on its main
+// threads all the time (ZSTD_decompressMultiFrame at main+0xEB380). The two calls to it become
+// svc 0xF0 / 0xF1, decompressed by the host (Kernel::Svc::Call, svc.cpp). Opt-in:
+// EDEN_NX2_ZSTD_NATIVE=1.
+constexpr std::array<u8, 4> NATIVE_ZSTD_SVC_F0{0x01, 0x1E, 0x00, 0xD4}; // svc #0xf0
+constexpr std::array<u8, 4> NATIVE_ZSTD_SVC_F1{0x21, 0x1E, 0x00, 0xD4}; // svc #0xf1
+constexpr std::array<u8, 4> NATIVE_ZSTD_ORIGINAL_F0{0x28, 0xD0, 0xD3, 0x97}; // bl, 0x97D3D028
+constexpr std::array<u8, 4> NATIVE_ZSTD_ORIGINAL_F1{0x87, 0x6C, 0xC6, 0x97}; // bl, 0x97C66C87
+constexpr std::array NATIVE_ZSTD_RECORDS{
+    BuiltinPatchRecord{0xBF72E0, NATIVE_ZSTD_SVC_F0, NATIVE_ZSTD_ORIGINAL_F0},
+    BuiltinPatchRecord{0xF50164, NATIVE_ZSTD_SVC_F1, NATIVE_ZSTD_ORIGINAL_F1},
+};
+
 constexpr std::array BUILTIN_PATCHES{
     // Ocarina of Time takes its "dynamic resolution disabled" path, so the 3D renders at full scale
     // instead of following the GPU-time controller down to its 480p floor.
@@ -104,6 +124,14 @@ constexpr std::array BUILTIN_PATCHES{
         .records = DYNAMIC_FPS_RECORDS,
         .state_offset = 0x4E9FE00,
         .state_size = 16,
+    },
+    BuiltinPatch{
+        .name = "Native zstd (built-in, experimental)",
+        .title_id = 0x0400486024DEC000,
+        .module = "main",
+        .build_id = "E0F3CCFAF50065AE4EA01EB5AEB13B1A45DA3348",
+        .records = NATIVE_ZSTD_RECORDS,
+        .opt_in_env = "EDEN_NX2_ZSTD_NATIVE",
     },
 };
 
@@ -524,7 +552,7 @@ std::vector<u8> PatchManager::PatchNSO(const std::vector<u8>& nso, const std::st
 
     const auto disabled = GetDisabledAddons();
     for (const auto& patch : BUILTIN_PATCHES) {
-        if (patch.title_id != title_id || patch.module != name) {
+        if (patch.title_id != title_id || patch.module != name || !BuiltinPatchAvailable(patch)) {
             continue;
         }
         if (std::find(disabled.cbegin(), disabled.cend(), patch.name) != disabled.cend()) {
@@ -1167,7 +1195,7 @@ std::vector<Patch> PatchManager::GetPatches(VirtualFile update_raw) const {
     }
 
     for (const auto& patch : BUILTIN_PATCHES) {
-        if (patch.title_id != title_id) {
+        if (patch.title_id != title_id || !BuiltinPatchAvailable(patch)) {
             continue;
         }
         const auto patch_disabled =

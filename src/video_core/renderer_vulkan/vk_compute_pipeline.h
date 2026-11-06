@@ -10,6 +10,7 @@
 #include <condition_variable>
 #include <functional>
 #include <mutex>
+#include <optional>
 #include <span>
 
 #include <boost/container/small_vector.hpp>
@@ -71,6 +72,17 @@ public:
         return written_images;
     }
 
+    /// Experimental (EDEN_NX2_OCARINA_FAST_UPSCALE): the colour source and 1080p output of the
+    /// heavy Ocarina upscaler pass, which the rasterizer replaces with a plain blit.
+    struct FastUpscaleTarget {
+        VideoCommon::ImageViewId src;
+        VideoCommon::ImageViewId dst;
+    };
+
+    [[nodiscard]] const std::optional<FastUpscaleTarget>& FastUpscale() const noexcept {
+        return fast_upscale;
+    }
+
     struct SampledImage {
         u32 tic;
         VideoCommon::ImageViewId id;
@@ -97,6 +109,7 @@ private:
     u32 num_descriptor_entries{};
     boost::container::small_vector<VideoCommon::ImageViewId, 8> written_images;
     std::vector<SampledImage> sampled_images;
+    std::optional<FastUpscaleTarget> fast_upscale;
 
     VideoCommon::ComputeUniformBufferSizes uniform_buffer_sizes{};
 

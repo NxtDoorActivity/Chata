@@ -469,6 +469,57 @@ bool ComputePipeline::Configure(Tegra::Engines::KeplerCompute& kepler_compute,
             shadow_index = image_index;
         }
     }
+    fast_upscale.reset();
+    if (kepler_compute.IsNativeMode() &&
+        (shader_hash == 0x03bf0ffc7d2d0bedULL || shader_hash == 0x31c0acb7c5e87c89ULL)) {
+        static const bool enabled{std::getenv("EDEN_NX2_OCARINA_FAST_UPSCALE") != nullptr};
+        if (enabled) {
+            VideoCommon::ImageViewId src_id{};
+            VideoCommon::ImageViewId dst_id{};
+            u32 src_count{};
+            u32 dst_count{};
+            for (const auto& view : views) {
+                if (view.id == VideoCommon::NULL_IMAGE_VIEW_ID || view.id == VideoCommon::ImageViewId{}) {
+                    continue;
+                }
+                const auto& image_view{texture_cache.GetImageView(view.id)};
+                if (image_view.format == PixelFormat::E5B9G9R9_FLOAT && !image_view.IsRescaled() &&
+                    image_view.size.width < 1920) {
+                    if (src_id != view.id) {
+                        ++src_count;
+                    }
+                    src_id = view.id;
+                }
+            }
+            for (const auto id : written_images) {
+                if (id == VideoCommon::NULL_IMAGE_VIEW_ID || id == VideoCommon::ImageViewId{}) {
+                    continue;
+                }
+                const auto& image_view{texture_cache.GetImageView(id)};
+                if (image_view.format == PixelFormat::B10G11R11_FLOAT && !image_view.IsRescaled() &&
+                    image_view.size.width == 1920 && image_view.size.height == 1080) {
+                    if (dst_id != id) {
+                        ++dst_count;
+                    }
+                    dst_id = id;
+                }
+            }
+            if (src_count == 1 && dst_count == 1) {
+                fast_upscale = FastUpscaleTarget{src_id, dst_id};
+                static std::atomic<bool> logged{false};
+                if (!logged.exchange(true)) {
+                    LOG_INFO(Render_Vulkan, "Ocarina fast upscale active for {:016x}", shader_hash);
+                }
+            } else {
+                static std::atomic<bool> logged{false};
+                if (!logged.exchange(true)) {
+                    LOG_WARNING(Render_Vulkan,
+                                "Ocarina fast upscale: no unique src/dst (src={} dst={}), using shader",
+                                src_count, dst_count);
+                }
+            }
+        }
+    }
     if (shadow_index) {
         const auto max_dim{device.GetMaxComputeWorkGroupCount()};
         if (qmd.grid_dim_x == 0 || qmd.grid_dim_y == 0 || qmd.grid_dim_z == 0 ||

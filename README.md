@@ -7,7 +7,7 @@
 -->
 
 <p align="center">
-  <img src="dist/branding/chata_logo.png" alt="Chata" width="600">
+  <img src="dist/branding/Chata_icon_with_logo.png" alt="Chata" width="600">
 </p>
 
 # Chata

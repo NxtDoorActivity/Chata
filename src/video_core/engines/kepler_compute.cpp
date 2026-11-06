@@ -11,6 +11,7 @@
 #include <cstdlib>
 #include <cstring>
 #include <fstream>
+#include <mutex>
 #include <optional>
 #include <string>
 #include <unordered_map>
@@ -1002,35 +1003,43 @@ void KeplerCompute::TraceDlssContract(u64 native_key, bool warn_unvalidated) {
     }
 }
 
-// EDEN_NX2_COMPUTE_CENSUS=<count>: logs the shape of the next <count> native compute dispatches
-// (program key, grid, block, and every texture/image handle found in constant buffer 0). Only
-// sizes, formats and addresses are logged, never program code or game data.
-// EDEN_NX2_COMPUTE_CENSUS_SKIP=<n> skips the first n dispatches (default 2000: past the loading
-// screens, into steady 3D rendering).
-void KeplerCompute::TraceComputeCensus(u64 program_id, u64 native_key) {
-    static const u32 limit = [] {
-        const char* value = std::getenv("EDEN_NX2_COMPUTE_CENSUS");
-        return value ? static_cast<u32>(std::min<unsigned long>(std::strtoul(value, nullptr, 10), 4096UL)) : 0U;
+// EDEN_NX2_COMPUTE_CENSUS=1: logs each distinct compute dispatch shape once (the shader hash as
+// gpu_work prints it, grid, block) together with every texture/image handle found in constant
+// buffer 0. Only sizes, formats and addresses are logged, never program code or game data.
+// EDEN_NX2_COMPUTE_CENSUS_MIN_GROUPS=<n> ignores dispatches with fewer workgroups (default 64),
+// which hides the many tiny GPU-driven helper dispatches.
+void KeplerCompute::TraceComputeCensus(u64 shader_hash) {
+    static const bool enabled = std::getenv("EDEN_NX2_COMPUTE_CENSUS") != nullptr;
+    if (!enabled) {
+        return;
+    }
+    static const u64 min_groups = [] {
+        const char* value = std::getenv("EDEN_NX2_COMPUTE_CENSUS_MIN_GROUPS");
+        return value ? static_cast<u64>(std::strtoull(value, nullptr, 10)) : 64ULL;
     }();
-    if (limit == 0) {
+    const u64 groups = u64{launch_description.grid_dim_x.Value()} *
+                       launch_description.grid_dim_y.Value() * launch_description.grid_dim_z.Value();
+    if (groups < min_groups) {
         return;
     }
-    static const u32 skip = [] {
-        const char* value = std::getenv("EDEN_NX2_COMPUTE_CENSUS_SKIP");
-        return value ? static_cast<u32>(std::min<unsigned long>(std::strtoul(value, nullptr, 10), 1000000UL)) : 2000U;
-    }();
-    if (compute_census_count >= skip + limit) {
-        return;
+    static std::mutex mutex;
+    static std::unordered_set<std::string> seen;
+    const std::string shape = fmt::format(
+        "{:016x} {}x{}x{} {}x{}x{}", shader_hash, launch_description.grid_dim_x.Value(),
+        launch_description.grid_dim_y.Value(), launch_description.grid_dim_z.Value(),
+        launch_description.block_dim_x.Value(), launch_description.block_dim_y.Value(),
+        launch_description.block_dim_z.Value());
+    {
+        std::scoped_lock lock{mutex};
+        if (seen.size() >= 400 || !seen.insert(shape).second) {
+            return;
+        }
     }
-    if (compute_census_count++ < skip) {
-        return;
-    }
-    LOG_INFO(HW_GPU, "COMPUTE census #{} program={:016x} key={:016x} grid={}x{}x{} block={}x{}x{} shared={:#x}",
-             compute_census_count - skip - 1, program_id, native_key,
-             launch_description.grid_dim_x.Value(), launch_description.grid_dim_y.Value(),
-             launch_description.grid_dim_z.Value(), launch_description.block_dim_x.Value(),
-             launch_description.block_dim_y.Value(), launch_description.block_dim_z.Value(),
-             launch_description.shared_alloc.Value());
+    LOG_INFO(HW_GPU, "COMPUTE census shape hash={:016x} grid={}x{}x{} block={}x{}x{} shared={:#x}",
+             shader_hash, launch_description.grid_dim_x.Value(),
+             launch_description.grid_dim_y.Value(), launch_description.grid_dim_z.Value(),
+             launch_description.block_dim_x.Value(), launch_description.block_dim_y.Value(),
+             launch_description.block_dim_z.Value(), launch_description.shared_alloc.Value());
     const auto& cbuf = launch_description.const_buffer_config[0];
     const GPUVAddr address = (GPUVAddr{cbuf.address_high} << 32) | cbuf.address_low;
     const u32 bytes = std::min<u32>(cbuf.size.Value(), 0x800U);
@@ -1052,8 +1061,8 @@ void KeplerCompute::TraceComputeCensus(u64 program_id, u64 native_key) {
         }
         std::array<u32, sizeof(Texture::TICEntry) / sizeof(u32)> words{};
         std::memcpy(words.data(), &tic, sizeof(tic));
-        LOG_INFO(HW_GPU, "COMPUTE census   cb0+{:03x}={:08x}: tic={} addr={:#x} {}x{} raw={:08x}",
-                 offset, handle, index, tic.Address(), tic.Width(), tic.Height(),
+        LOG_INFO(HW_GPU, "COMPUTE census   hash={:016x} cb0+{:03x}={:08x}: tic={} {}x{} raw={:08x}",
+                 shader_hash, offset, handle, index, tic.Width(), tic.Height(),
                  fmt::join(words, " "));
     }
 }

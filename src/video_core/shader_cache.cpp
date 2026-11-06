@@ -282,9 +282,6 @@ const ShaderInfo* ShaderCache::ComputeShader() {
             throw;
         }
     }
-    if (kepler_compute->IsNativeMode() && shader->lowered_native) {
-        kepler_compute->TraceComputeCensus(program_id, shader->lowered_native->native_program_key);
-    }
     // Check both warm and cold shader paths, before selecting a disk-cached pipeline.
     // EDEN_NX2_DLSS_REPLACEMENT=native retains the native network for comparisons.
     if (kepler_compute->IsNativeMode() && shader->lowered_native &&

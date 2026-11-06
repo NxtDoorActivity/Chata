@@ -91,9 +91,16 @@ public:
             return;
         }
         const u32 query = trace_work_count * 2;
-        trace_work_items[trace_work_count++] = {hash, fragment_hash, size};
+        WorkTrace& item = trace_work_items[trace_work_count++];
+        item = {hash, fragment_hash, size};
+        for (size_t i = 0; i < item.cmds_before.size(); ++i) {
+            item.cmds_before[i] = vk::g_cmd_counts[i].load(std::memory_order_relaxed);
+        }
         cmdbuf.WriteTimestamp(VK_PIPELINE_STAGE_BOTTOM_OF_PIPE_BIT, *trace_work_pool, query);
         work();
+        for (size_t i = 0; i < item.cmds_after.size(); ++i) {
+            item.cmds_after[i] = vk::g_cmd_counts[i].load(std::memory_order_relaxed);
+        }
         cmdbuf.WriteTimestamp(VK_PIPELINE_STAGE_BOTTOM_OF_PIPE_BIT, *trace_work_pool, query + 1);
     }
 
@@ -461,6 +468,9 @@ private:
         u64 fragment_hash{};
         /// Dispatch grid, or vertex and instance counts of a draw; zero when indirect.
         std::array<u32, 3> size{};
+        /// Recorded command counts (vk::CmdKind) just before and after this item.
+        std::array<u32, static_cast<size_t>(vk::CmdKind::Count)> cmds_before{};
+        std::array<u32, static_cast<size_t>(vk::CmdKind::Count)> cmds_after{};
     };
     vk::QueryPool trace_work_pool;
     std::vector<WorkTrace> trace_work_items;

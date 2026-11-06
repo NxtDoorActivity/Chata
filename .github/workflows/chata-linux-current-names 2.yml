@@ -1,0 +1,400 @@
+# SPDX-FileCopyrightText: 2026 Chata contributors
+# SPDX-License-Identifier: GPL-3.0-or-later
+#
+# Linux x86-64 AppImage build for Chata.
+#
+# This is a NEW file, derived from the Linux parts of upstream Lichii's
+# .github/workflows/release-binaries.yml. Upstream's file is left untouched so
+# that merging upstream changes never conflicts with this one.
+#
+# Differences from upstream:
+#   - Linux x86-64 only (standard + optional PGO variant)
+#   - manual runs only (workflow_dispatch); no automatic release on push
+#   - publishing a release is opt-in and defaults to OFF
+#   - tool versions and file names are workflow-level variables
+#   - packaging inputs are checked before building
+#   - the AppImage is inspected for missing libraries and glibc requirement
+#
+# Names still point at the Lichii files (binary, desktop file, icon) because the
+# rebrand patch has not been applied yet. When it lands, change only the
+# APP_BIN / DESKTOP_FILE / ICON_SRC / ICON_ID variables below.
+
+name: chata-linux
+
+on:
+  workflow_dispatch:
+    inputs:
+      build_pgo:
+        description: Also build the PGO variant (slower; needs clang from apt.llvm.org)
+        type: boolean
+        default: true
+      publish_release:
+        description: Publish the AppImages as a GitHub pre-release
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+
+env:
+  # Clang major used by the PGO build. A profile written by a newer clang cannot be
+  # read by an older one, so keep this at or above the version that produced the
+  # profile file in the repository root.
+  PGO_LLVM_VERSION: "23"
+  PGO_PROFILE: eglantine.profdata
+
+  # Names that the rebrand will change. Keep these in sync with CMakeLists.txt.
+  APP_BIN: lichii
+  CLI_BIN: eden-cli
+  DESKTOP_FILE: dist/io.github.zortos293.lichii.desktop
+  ICON_SRC: dist/lichii.png
+  ICON_ID: io.github.zortos293.lichii
+  RELEASE_PREFIX: chata
+
+  # Packaging tools. "continuous" always fetches the newest build, which can change
+  # underneath you. Pin both to a release tag, and set the SHA-256 values, once you
+  # have a build that works. The download step prints the hashes to copy.
+  LINUXDEPLOY_TAG: continuous
+  LINUXDEPLOY_QT_TAG: continuous
+  LINUXDEPLOY_SHA256: ""
+  LINUXDEPLOY_QT_SHA256: ""
+
+  # The upstream Lichii commit this fork's patch series is based on. Shown in the
+  # release notes. Fill it in when you cut a release.
+  UPSTREAM_BASE_SHA: "5a50f50e0b7ea0cb0e71c4ae8e8e7425c8a3069c"
+
+# A running build is never cancelled; a newer dispatch waits for it.
+concurrency:
+  group: chata-linux-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  build:
+    name: ${{ matrix.platform }}
+    runs-on: ubuntu-24.04
+    env:
+      CCACHE_DIR: ${{ github.workspace }}/.ccache
+      CCACHE_MAXSIZE: 3000M
+      CCACHE_COMPILERCHECK: content
+    strategy:
+      fail-fast: false
+      matrix: ${{ fromJSON(inputs.build_pgo && '{"include":[{"platform":"linux-x86_64"},{"platform":"linux-x86_64-pgo","pgo":true}]}' || '{"include":[{"platform":"linux-x86_64"}]}') }}
+
+    steps:
+      - name: Check out source
+        uses: actions/checkout@v5
+
+      - name: Check packaging inputs
+        shell: bash
+        run: |
+          set -euo pipefail
+          for f in "$DESKTOP_FILE" "$ICON_SRC" CMakeLists.txt; do
+            test -f "$f" || { echo "::error::missing file: $f"; exit 1; }
+          done
+          # linuxdeploy needs the desktop file's Icon= value to match the icon file name.
+          icon_key=$(sed -n 's/^Icon=//p' "$DESKTOP_FILE" | head -n1)
+          if [ "$icon_key" != "$ICON_ID" ]; then
+            echo "::error::$DESKTOP_FILE has Icon=$icon_key but ICON_ID is $ICON_ID"
+            exit 1
+          fi
+          if [ "${{ matrix.pgo }}" = "true" ]; then
+            test -s "$PGO_PROFILE" || { echo "::error::missing PGO profile $PGO_PROFILE"; exit 1; }
+          fi
+
+      - name: Install Linux dependencies
+        shell: bash
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            autoconf cmake g++ gcc git glslang-tools libglu1-mesa-dev \
+            libpulse-dev libtool libudev-dev libxkbcommon-x11-0 \
+            mesa-common-dev nasm ninja-build qt6-base-private-dev \
+            qt6-charts-dev qt6-tools-dev libavfilter-dev libavcodec-dev \
+            libswscale-dev pkg-config zlib1g-dev libva-dev libvdpau-dev \
+            spirv-tools spirv-headers libusb-1.0-0-dev \
+            libboost-dev libboost-fiber-dev libboost-context-dev \
+            libopus-dev libasound2-dev ccache \
+            libxcb-cursor0 libxcb-icccm4 libxcb-image0 \
+            libxcb-keysyms1 libxcb-randr0 libxcb-render-util0 libxcb-shape0 \
+            libxcb-xinerama0 libxcb-xkb1
+
+      - name: Install Qt
+        uses: jurplel/install-qt-action@v4
+        with:
+          version: "6.8.3"
+          host: linux
+          target: desktop
+          arch: linux_gcc_64
+          modules: qtcharts
+          cache: true
+
+      - name: Install clang for PGO
+        if: matrix.pgo
+        shell: bash
+        run: |
+          set -euo pipefail
+          curl -fsSL https://apt.llvm.org/llvm-snapshot.gpg.key |
+            sudo tee /etc/apt/trusted.gpg.d/apt.llvm.org.asc > /dev/null
+          echo "deb http://apt.llvm.org/noble/ llvm-toolchain-noble-$PGO_LLVM_VERSION main" |
+            sudo tee /etc/apt/sources.list.d/llvm.list > /dev/null
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            "clang-$PGO_LLVM_VERSION" "lld-$PGO_LLVM_VERSION"
+          "clang-$PGO_LLVM_VERSION" --version
+
+      - name: Restore CPM downloads
+        id: cpm-cache
+        uses: actions/cache/restore@v5
+        with:
+          path: .cache/cpm
+          key: cpm-${{ matrix.platform }}-v2-${{ hashFiles('cpmfile.json', 'CMakeLists.txt', 'CMakeModules/CPM*.cmake', 'externals/**/CMakeLists.txt', 'src/**/CMakeLists.txt') }}
+          restore-keys: |
+            cpm-${{ matrix.platform }}-v2-
+            cpm-${{ runner.os }}-
+
+      - name: Restore compiler objects
+        id: compiler-cache
+        uses: actions/cache/restore@v5
+        with:
+          path: .ccache
+          key: objects-${{ matrix.platform }}-v2-${{ github.sha }}-${{ github.run_id }}-${{ github.run_attempt }}
+          restore-keys: |
+            objects-${{ matrix.platform }}-v2-${{ github.sha }}-
+            objects-${{ matrix.platform }}-v2-
+
+      - name: Configure
+        shell: bash
+        run: |
+          set -euo pipefail
+          flags=(
+            -DCMAKE_BUILD_TYPE=Release
+            -DBUILD_TESTING=OFF
+            -DYUZU_TESTS=OFF
+            -DYUZU_CMD=ON
+            -DYUZU_ROOM=OFF
+            -DYUZU_ROOM_STANDALONE=OFF
+            -DYUZU_USE_BUNDLED_QT=OFF
+            "-DCMAKE_PREFIX_PATH=$QT_ROOT_DIR"
+            -DYUZU_USE_BUNDLED_SDL3=ON
+            -DVulkanHeaders_FORCE_BUNDLED=ON
+            -DVulkanUtilityLibraries_FORCE_BUNDLED=ON
+            -DENABLE_UPDATE_CHECKER=OFF
+            -DENABLE_WEB_SERVICE=OFF
+            -DUSE_DISCORD_PRESENCE=OFF
+            -DUSE_CCACHE=ON
+          )
+          if [ '${{ matrix.pgo }}' = 'true' ]; then
+            profile="-fprofile-use=$PWD/$PGO_PROFILE -Wno-backend-plugin \
+              -Wno-profile-instr-unprofiled -Wno-profile-instr-out-of-date"
+            flags+=(
+              "-DCMAKE_C_COMPILER=clang-$PGO_LLVM_VERSION"
+              "-DCMAKE_CXX_COMPILER=clang++-$PGO_LLVM_VERSION"
+              "-DCMAKE_EXE_LINKER_FLAGS=-B/usr/lib/llvm-$PGO_LLVM_VERSION/bin -fuse-ld=lld"
+              "-DCMAKE_C_FLAGS=$profile"
+              "-DCMAKE_CXX_FLAGS=$profile"
+            )
+          fi
+          cmake -S . -B build/release -G Ninja "${flags[@]}"
+
+      - name: Save CPM downloads
+        if: steps.cpm-cache.outputs.cache-hit != 'true'
+        uses: actions/cache/save@v5
+        with:
+          path: .cache/cpm
+          key: ${{ steps.cpm-cache.outputs.cache-primary-key }}
+
+      - name: Build
+        shell: bash
+        run: |
+          ccache --zero-stats
+          cmake --build build/release --target yuzu yuzu-cmd --parallel
+          ccache --show-stats
+
+      - name: Save compiler objects
+        if: always() && steps.compiler-cache.outcome == 'success'
+        uses: actions/cache/save@v5
+        with:
+          path: .ccache
+          key: ${{ steps.compiler-cache.outputs.cache-primary-key }}
+
+      - name: Package tar.gz
+        shell: bash
+        run: |
+          set -euo pipefail
+          test -x "build/release/bin/$APP_BIN"
+          test -x "build/release/bin/$CLI_BIN"
+          strip "build/release/bin/$APP_BIN" "build/release/bin/$CLI_BIN"
+          tar -czf "$RELEASE_PREFIX-${{ matrix.platform }}.tar.gz" \
+            -C build/release/bin "$APP_BIN" "$CLI_BIN"
+          ls -la "$RELEASE_PREFIX-${{ matrix.platform }}.tar.gz"
+
+      - name: Download packaging tools
+        shell: bash
+        run: |
+          set -euo pipefail
+          tools="$RUNNER_TEMP/linuxdeploy"
+          mkdir -p "$tools"
+          base=https://github.com/linuxdeploy
+          curl -fsSL -o "$tools/linuxdeploy-x86_64.AppImage" \
+            "$base/linuxdeploy/releases/download/$LINUXDEPLOY_TAG/linuxdeploy-x86_64.AppImage"
+          curl -fsSL -o "$tools/linuxdeploy-plugin-qt-x86_64.AppImage" \
+            "$base/linuxdeploy-plugin-qt/releases/download/$LINUXDEPLOY_QT_TAG/linuxdeploy-plugin-qt-x86_64.AppImage"
+          chmod +x "$tools"/*.AppImage
+          # Print the hashes so they can be pinned in the variables at the top.
+          sha256sum "$tools"/*.AppImage | tee "$tools/hashes.txt"
+          if [ -n "$LINUXDEPLOY_SHA256" ]; then
+            echo "$LINUXDEPLOY_SHA256  $tools/linuxdeploy-x86_64.AppImage" | sha256sum -c -
+          fi
+          if [ -n "$LINUXDEPLOY_QT_SHA256" ]; then
+            echo "$LINUXDEPLOY_QT_SHA256  $tools/linuxdeploy-plugin-qt-x86_64.AppImage" | sha256sum -c -
+          fi
+          if [ "$LINUXDEPLOY_TAG" = continuous ] || [ "$LINUXDEPLOY_QT_TAG" = continuous ]; then
+            echo "::warning::linuxdeploy is not pinned; builds may not be reproducible"
+          fi
+
+      - name: Package AppImage
+        shell: bash
+        run: |
+          set -euo pipefail
+          tools="$RUNNER_TEMP/linuxdeploy"
+          # The icon file name must match the desktop file's Icon= value.
+          icon="$RUNNER_TEMP/$ICON_ID.png"
+          cp "$ICON_SRC" "$icon"
+
+          export APPIMAGE_EXTRACT_AND_RUN=1
+          export QMAKE="$QT_ROOT_DIR/bin/qmake"
+          # Include the Wayland platform plugins (Steam Deck game mode uses gamescope).
+          export EXTRA_QT_MODULES=waylandcompositor
+          export EXTRA_PLATFORM_PLUGINS='libqwayland-egl.so;libqwayland-generic.so'
+          export LDAI_VERSION="build-${GITHUB_RUN_NUMBER}-${GITHUB_SHA::7}"
+          export LDAI_OUTPUT="$RELEASE_PREFIX-${{ matrix.platform }}.AppImage"
+          export OUTPUT="$LDAI_OUTPUT"
+          export ARCH=x86_64
+
+          "$tools/linuxdeploy-x86_64.AppImage" --appdir AppDir \
+            --executable "build/release/bin/$APP_BIN" \
+            --executable "build/release/bin/$CLI_BIN" \
+            --desktop-file "$DESKTOP_FILE" \
+            --icon-file "$icon" \
+            --plugin qt \
+            --output appimage
+
+          test -s "$LDAI_OUTPUT"
+          ls -la "$LDAI_OUTPUT"
+
+      - name: Inspect AppImage
+        # Diagnostics only: a problem here must never block the upload.
+        continue-on-error: true
+        shell: bash
+        run: |
+          set -euo pipefail
+          img="$RELEASE_PREFIX-${{ matrix.platform }}.AppImage"
+          chmod +x "$img"
+          "./$img" --appimage-extract > /dev/null
+          root=squashfs-root
+
+          # 1. Libraries the main program cannot find (excluding system libraries that
+          #    are expected on the host: glibc, GPU driver, Vulkan loader).
+          export LD_LIBRARY_PATH="$root/usr/lib"
+          missing=$(ldd "$root/usr/bin/$APP_BIN" | grep 'not found' || true)
+
+          # 2. Highest glibc symbol version required by the bundled files. The target
+          #    system must provide at least this glibc.
+          need=$(find "$root/usr" -type f \( -name '*.so*' -o -path "*/bin/*" \) -print0 |
+            { xargs -0 objdump -T 2>/dev/null || true; } |
+            { grep -o 'GLIBC_[0-9.]*' || true; } | sed 's/GLIBC_//' | sort -V | tail -n1)
+
+          {
+            echo "### AppImage inspection: ${{ matrix.platform }}"
+            echo "- Required glibc: ${need:-unknown} (check the target with: ldd --version)"
+            if [ -n "$missing" ]; then
+              echo "- Unresolved libraries:"
+              echo '```'
+              echo "$missing"
+              echo '```'
+            else
+              echo "- Unresolved libraries: none"
+            fi
+          } | tee -a "$GITHUB_STEP_SUMMARY"
+
+          if [ -n "$missing" ]; then
+            echo "::warning::AppImage has unresolved libraries (see summary)"
+          fi
+          rm -rf "$root"
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v7
+        with:
+          name: ${{ env.RELEASE_PREFIX }}-${{ matrix.platform }}-${{ github.sha }}
+          path: |
+            ${{ env.RELEASE_PREFIX }}-${{ matrix.platform }}.tar.gz
+            ${{ env.RELEASE_PREFIX }}-${{ matrix.platform }}.AppImage
+          if-no-files-found: error
+          compression-level: 0
+          retention-days: 7
+
+  release:
+    name: Publish pre-release
+    needs: build
+    if: inputs.publish_release
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write
+    steps:
+      - name: Download binaries
+        uses: actions/download-artifact@v7
+        with:
+          pattern: ${{ env.RELEASE_PREFIX }}-*-${{ github.sha }}
+          path: artifacts
+
+      - name: Collect release files
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir release-files
+          find artifacts -type f \( -name '*.AppImage' -o -name '*.tar.gz' \) \
+            -exec cp {} release-files/ \;
+          ls -la release-files
+          (cd release-files && sha256sum * > SHA256SUMS.txt && cat SHA256SUMS.txt)
+
+      - name: Create pre-release
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          tag="${RELEASE_PREFIX}-build-${GITHUB_RUN_NUMBER}"
+          base_line="Not recorded."
+          if [ -n "$UPSTREAM_BASE_SHA" ]; then
+            base_line="https://github.com/zortos293/Lichii/commit/${UPSTREAM_BASE_SHA}"
+          fi
+          cat > notes.md <<EOF
+          Experimental Linux x86-64 build of ${GITHUB_REPOSITORY} (branch ${GITHUB_REF_NAME}, commit ${GITHUB_SHA}).
+
+          This is an independent fork and is not an official Lichii, Eden or yuzu release.
+          It is not affiliated with Nintendo. It does not include games, keys or firmware.
+
+          **Files**
+          - ${RELEASE_PREFIX}-linux-x86_64.AppImage: self-contained build
+          - ${RELEASE_PREFIX}-linux-x86_64-pgo.AppImage: profile-guided build, if present
+          - tar.gz: uses system Qt 6 and libraries instead of bundling them
+          - SHA256SUMS.txt: checksums for all files
+
+          Run the AppImage with: chmod +x <file> && ./<file>
+          If it fails to start because of FUSE, run it with --appimage-extract-and-run.
+
+          **Source and license**
+          This program is licensed under GPL-3.0-or-later. The exact source for these binaries
+          is the tag of this release: https://github.com/${GITHUB_REPOSITORY}/tree/${tag}
+          Upstream base commit: ${base_line}
+          Files were modified from the upstream project; see the git history for details.
+          EOF
+          # Remove the heredoc indentation.
+          sed -i 's/^          //' notes.md
+
+          gh release create "$tag" release-files/* \
+            --repo "$GITHUB_REPOSITORY" \
+            --target "$GITHUB_SHA" \
+            --prerelease \
+            --title "Chata ${tag} (${GITHUB_SHA::7})" \
+            --notes-file notes.md

@@ -7,6 +7,7 @@
 #pragma once
 
 #include <array>
+#include <atomic>
 #include <exception>
 #include <limits>
 #include <memory>
@@ -1236,6 +1237,27 @@ private:
     const InstanceDispatch* dld = nullptr;
 };
 
+/// Counts of recorded commands by kind, read by the DKB gap trace. Relaxed atomics, near-free.
+enum class CmdKind : u32 {
+    PipelineBarrier,
+    CopyBuffer,
+    CopyImage,
+    BlitImage,
+    CopyBufferToImage,
+    CopyImageToBuffer,
+    ClearColorImage,
+    ClearAttachments,
+    BeginRenderPass,
+    EndRenderPass,
+    ResolveImage,
+    FillBuffer,
+    Count,
+};
+inline std::array<std::atomic<u32>, static_cast<size_t>(CmdKind::Count)> g_cmd_counts{};
+inline void CountCmd(CmdKind kind) noexcept {
+    g_cmd_counts[static_cast<size_t>(kind)].fetch_add(1, std::memory_order_relaxed);
+}
+
 class CommandBuffer {
 public:
     CommandBuffer() noexcept = default;
@@ -1260,10 +1282,12 @@ public:
 
     void BeginRenderPass(const VkRenderPassBeginInfo& renderpass_bi,
                          VkSubpassContents contents) const noexcept {
+        CountCmd(CmdKind::BeginRenderPass);
         dld->vkCmdBeginRenderPass(handle, &renderpass_bi, contents);
     }
 
     void EndRenderPass() const noexcept {
+        CountCmd(CmdKind::EndRenderPass);
         dld->vkCmdEndRenderPass(handle);
     }
 
@@ -1361,24 +1385,28 @@ public:
 
     void ClearAttachments(Span<VkClearAttachment> attachments,
                           Span<VkClearRect> rects) const noexcept {
+        CountCmd(CmdKind::ClearAttachments);
         dld->vkCmdClearAttachments(handle, attachments.size(), attachments.data(), rects.size(),
                                    rects.data());
     }
 
     void ClearColorImage(VkImage image, VkImageLayout layout, VkClearColorValue color,
                          Span<VkImageSubresourceRange> ranges) {
+        CountCmd(CmdKind::ClearColorImage);
         dld->vkCmdClearColorImage(handle, image, layout, &color, ranges.size(), ranges.data());
     }
 
     void BlitImage(VkImage src_image, VkImageLayout src_layout, VkImage dst_image,
                    VkImageLayout dst_layout, Span<VkImageBlit> regions,
                    VkFilter filter) const noexcept {
+        CountCmd(CmdKind::BlitImage);
         dld->vkCmdBlitImage(handle, src_image, src_layout, dst_image, dst_layout, regions.size(),
                             regions.data(), filter);
     }
 
     void ResolveImage(VkImage src_image, VkImageLayout src_layout, VkImage dst_image,
                       VkImageLayout dst_layout, Span<VkImageResolve> regions) {
+        CountCmd(CmdKind::ResolveImage);
         dld->vkCmdResolveImage(handle, src_image, src_layout, dst_image, dst_layout, regions.size(),
                                regions.data());
     }
@@ -1395,6 +1423,7 @@ public:
                          VkDependencyFlags dependency_flags, Span<VkMemoryBarrier> memory_barriers,
                          Span<VkBufferMemoryBarrier> buffer_barriers,
                          Span<VkImageMemoryBarrier> image_barriers) const noexcept {
+        CountCmd(CmdKind::PipelineBarrier);
         static constexpr u32 MaxBarriers = 16;
         if (dld->vkCmdPipelineBarrier2 && memory_barriers.size() <= MaxBarriers &&
             buffer_barriers.size() <= MaxBarriers && image_barriers.size() <= MaxBarriers) {
@@ -1504,23 +1533,27 @@ public:
 
     void CopyBufferToImage(VkBuffer src_buffer, VkImage dst_image, VkImageLayout dst_image_layout,
                            Span<VkBufferImageCopy> regions) const noexcept {
+        CountCmd(CmdKind::CopyBufferToImage);
         dld->vkCmdCopyBufferToImage(handle, src_buffer, dst_image, dst_image_layout, regions.size(),
                                     regions.data());
     }
 
     void CopyBuffer(VkBuffer src_buffer, VkBuffer dst_buffer,
                     Span<VkBufferCopy> regions) const noexcept {
+        CountCmd(CmdKind::CopyBuffer);
         dld->vkCmdCopyBuffer(handle, src_buffer, dst_buffer, regions.size(), regions.data());
     }
 
     void CopyImage(VkImage src_image, VkImageLayout src_layout, VkImage dst_image,
                    VkImageLayout dst_layout, Span<VkImageCopy> regions) const noexcept {
+        CountCmd(CmdKind::CopyImage);
         dld->vkCmdCopyImage(handle, src_image, src_layout, dst_image, dst_layout, regions.size(),
                             regions.data());
     }
 
     void CopyImageToBuffer(VkImage src_image, VkImageLayout src_layout, VkBuffer dst_buffer,
                            Span<VkBufferImageCopy> regions) const noexcept {
+        CountCmd(CmdKind::CopyImageToBuffer);
         dld->vkCmdCopyImageToBuffer(handle, src_image, src_layout, dst_buffer, regions.size(),
                                     regions.data());
     }
@@ -1534,6 +1567,7 @@ public:
 
     void FillBuffer(VkBuffer dst_buffer, VkDeviceSize dst_offset, VkDeviceSize size,
                     u32 data) const noexcept {
+        CountCmd(CmdKind::FillBuffer);
         dld->vkCmdFillBuffer(handle, dst_buffer, dst_offset, size, data);
     }
 

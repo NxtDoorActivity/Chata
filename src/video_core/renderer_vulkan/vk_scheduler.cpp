@@ -4,6 +4,7 @@
 // SPDX-FileCopyrightText: Copyright 2019 yuzu Emulator Project
 // SPDX-License-Identifier: GPL-2.0-or-later
 
+#include <optional>
 #include <chrono>
 #include <cstdlib>
 #include <memory>
@@ -630,10 +631,52 @@ void Scheduler::ReportWorkTimes() {
     };
     std::map<std::pair<u64, u64>, Totals> by_shaders;
     double total_ms{};
+    // Gap trace: time between consecutive timed items, attributed to the commands recorded there.
+    constexpr size_t NumKinds = static_cast<size_t>(vk::CmdKind::Count);
+    static constexpr std::array<const char*, NumKinds> KindNames{
+        "barrier", "copy_buf", "copy_img", "blit",   "buf2img", "img2buf",
+        "clear_img", "clear_att", "rp_begin", "rp_end", "resolve", "fill"};
+    std::array<double, NumKinds> kind_gap_ms{};
+    std::array<u64, NumKinds> kind_cmds{};
+    double gap_total_ms{};
+    double nocmd_gap_ms{};
+    double big_gap_ms{};
+    u32 gap_count{};
+    u32 big_gap_count{};
+    std::optional<u64> prev_end;
+    u32 prev_index{};
     for (u32 i = 0; i < count; ++i) {
         if (results[i * 2].available == 0 || results[i * 2 + 1].available == 0) {
             continue;
         }
+        if (prev_end) {
+            const double gap = static_cast<double>(Common::DkbFrameTrace::TimestampDelta(
+                                   *prev_end, results[i * 2].timestamp, trace_timestamp_bits)) *
+                               trace_timestamp_period / 1e6;
+            if (gap >= 0.0 && gap < 1000.0) {
+                gap_total_ms += gap;
+                ++gap_count;
+                if (gap > 2.0) {
+                    big_gap_ms += gap;
+                    ++big_gap_count;
+                }
+                bool any = false;
+                for (size_t k = 0; k < NumKinds; ++k) {
+                    const u32 delta = trace_work_items[i].cmds_before[k] -
+                                      trace_work_items[prev_index].cmds_after[k];
+                    if (delta != 0 && delta < 1000000) {
+                        kind_gap_ms[k] += gap;
+                        kind_cmds[k] += delta;
+                        any = true;
+                    }
+                }
+                if (!any) {
+                    nocmd_gap_ms += gap;
+                }
+            }
+        }
+        prev_end = results[i * 2 + 1].timestamp;
+        prev_index = i;
         const double ms = static_cast<double>(Common::DkbFrameTrace::TimestampDelta(
                               results[i * 2].timestamp, results[i * 2 + 1].timestamp,
                               trace_timestamp_bits)) *
@@ -668,6 +711,17 @@ void Scheduler::ReportWorkTimes() {
     LOG_INFO(Render_Vulkan,
              "DKB gpu_work renderer_frame={} timed={} timed_sum_ms={:.3f} slowest:{}",
              trace_sample_frame, count, total_ms, slowest);
+    std::string kinds;
+    for (size_t k = 0; k < NumKinds; ++k) {
+        if (kind_cmds[k] != 0) {
+            kinds += fmt::format(" {}={:.3f}ms/{}cmds", KindNames[k], kind_gap_ms[k], kind_cmds[k]);
+        }
+    }
+    LOG_INFO(Render_Vulkan,
+             "DKB gap_trace renderer_frame={} timed_sum_ms={:.3f} gap_total_ms={:.3f} gaps={} "
+             "big_gaps(>2ms)={}/{:.3f}ms no_cmd_gap_ms={:.3f} gap_ms_by_cmd(overlapping):{}",
+             trace_sample_frame, total_ms, gap_total_ms, gap_count, big_gap_count, big_gap_ms,
+             nocmd_gap_ms, kinds);
 }
 
 void Scheduler::TraceGpuSubmission() {

@@ -661,6 +661,16 @@ void Scheduler::ReportWorkTimes() {
     u32 big_gap_count{};
     std::optional<u64> prev_end;
     u32 prev_index{};
+    // Draw census: how the timed items split by cost, and how many repeat the previous item's
+    // shaders (candidates for batching or instancing in the game).
+    static constexpr std::array<double, 5> BucketLimitsMs{0.01, 0.03, 0.1, 0.5, 1e9};
+    std::array<u32, 5> bucket_count{};
+    std::array<double, 5> bucket_ms{};
+    u32 same_as_prev{};
+    u32 longest_run{1};
+    u32 current_run{};
+    u32 compute_items{};
+    std::pair<u64, u64> prev_shaders{~u64{}, ~u64{}};
     for (u32 i = 0; i < count; ++i) {
         if (results[i * 2].available == 0 || results[i * 2 + 1].available == 0) {
             continue;
@@ -698,6 +708,23 @@ void Scheduler::ReportWorkTimes() {
                               trace_timestamp_bits)) *
                           trace_timestamp_period / 1e6;
         const WorkTrace& item = trace_work_items[i];
+        {
+            size_t bucket = 0;
+            while (ms >= BucketLimitsMs[bucket]) {
+                ++bucket;
+            }
+            ++bucket_count[bucket];
+            bucket_ms[bucket] += ms;
+            const std::pair<u64, u64> shaders{item.hash, item.fragment_hash};
+            if (shaders == prev_shaders) {
+                ++same_as_prev;
+                longest_run = std::max(longest_run, ++current_run + 1);
+            } else {
+                current_run = 0;
+            }
+            prev_shaders = shaders;
+            compute_items += item.fragment_hash == 0 ? 1 : 0;
+        }
         Totals& totals = by_shaders[{item.hash, item.fragment_hash}];
         totals.total_ms += ms;
         ++totals.count;
@@ -727,6 +754,32 @@ void Scheduler::ReportWorkTimes() {
     LOG_INFO(Render_Vulkan,
              "DKB gpu_work renderer_frame={} timed={} timed_sum_ms={:.3f} slowest:{}",
              trace_sample_frame, count, total_ms, slowest);
+    {
+        std::vector<std::pair<std::pair<u64, u64>, Totals>> by_count(by_shaders.begin(),
+                                                                     by_shaders.end());
+        std::ranges::sort(by_count, std::greater<>{},
+                          [](const auto& entry) { return entry.second.count; });
+        const size_t distinct = by_count.size();
+        if (by_count.size() > 6) {
+            by_count.resize(6);
+        }
+        std::string most;
+        for (const auto& [shaders, totals] : by_count) {
+            most += shaders.second == 0
+                        ? fmt::format(" s6:{:016x}", shaders.first)
+                        : fmt::format(" s1:{:016x}+s5:{:016x}", shaders.first, shaders.second);
+            most += fmt::format("={}x/{:.3f}ms(avg {:.4f})", totals.count, totals.total_ms,
+                                totals.count != 0 ? totals.total_ms / totals.count : 0.0);
+        }
+        LOG_INFO(Render_Vulkan,
+                 "DKB draw_census renderer_frame={} items={} distinct_shader_pairs={} "
+                 "compute_or_single_stage={} same_shaders_as_previous={} longest_same_run={} "
+                 "cost_buckets(<0.01/<0.03/<0.1/<0.5/>=0.5ms)={}/{:.2f}ms {}/{:.2f}ms {}/{:.2f}ms "
+                 "{}/{:.2f}ms {}/{:.2f}ms most_often:{}",
+                 trace_sample_frame, count, distinct, compute_items, same_as_prev, longest_run,
+                 bucket_count[0], bucket_ms[0], bucket_count[1], bucket_ms[1], bucket_count[2],
+                 bucket_ms[2], bucket_count[3], bucket_ms[3], bucket_count[4], bucket_ms[4], most);
+    }
     std::string kinds;
     for (size_t k = 0; k < NumKinds; ++k) {
         if (kind_cmds[k] != 0) {

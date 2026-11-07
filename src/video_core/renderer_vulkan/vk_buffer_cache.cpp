@@ -17,6 +17,7 @@
 #include <span>
 #include <vector>
 
+#include "common/settings.h"
 #include "video_core/buffer_cache/buffer_cache_base.h"
 #include "video_core/nx2_perf.h"
 #include "video_core/nx2_profile.h"
@@ -618,7 +619,11 @@ void BufferCacheRuntime::CopyBuffer(VkBuffer dst_buffer, VkBuffer src_buffer,
     // scope covers all later transfers), and the sources are host-written staging data. The one
     // hazard left is two writes to the same bytes, so a copy overlapping a destination written
     // since the chain's barrier starts a new chain with its own barrier.
-    static const bool chain_enabled{std::getenv("EDEN_NX2_COPY_CHAIN") != nullptr};
+    // The "Copy Chain (built-in)" Add-On decides; EDEN_NX2_COPY_CHAIN=1 forces it on, =0 off.
+    static const char* const chain_env{std::getenv("EDEN_NX2_COPY_CHAIN")};
+    const bool chain_enabled = chain_env != nullptr
+                                   ? chain_env[0] != '0'
+                                   : Settings::copy_chain_addon.load(std::memory_order_relaxed);
     bool skip_pre_barrier{};
     if (chain_enabled && barrier && src_buffer == staging_pool.StreamBuf()) {
         const bool chained = scheduler.RecordSerial() == copy_chain_serial &&

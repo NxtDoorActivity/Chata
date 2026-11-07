@@ -8,6 +8,7 @@
 
 #include <algorithm>
 #include <array>
+#include <atomic>
 #include <map>
 #include <memory>
 #include <optional>
@@ -134,6 +135,10 @@ struct TouchFromButtonMap {
     std::string name;
     std::vector<std::string> buttons;
 };
+
+/// Whether the "Copy Chain (built-in)" Add-On is ticked for the running game (set by PatchNSO when
+/// the game starts; read by the Vulkan buffer cache).
+inline std::atomic<bool> copy_chain_addon{false};
 
 struct Values {
     Linkage linkage{};

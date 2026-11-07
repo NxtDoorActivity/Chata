@@ -2505,7 +2505,7 @@ static void Call64(Core::System& system, u32 imm, std::span<uint64_t, 8> args) {
     }
 }
 // Native zstd (from sharkiix's Lichii fork, GPL-3.0). Ocarina of Time (Switch 2) decompresses zstd
-// data on its main threads all the time (ZSTD_decompressMultiFrame at main+0xEB380). The opt-in
+// data on its main threads all the time (ZSTD_decompressMultiFrame at main+0xEB380). The
 // built-in patch "Native zstd" (patch_manager.cpp) turns its two one-shot calls (no dictionary;
 // the callers only read the output) into svc 0xF0 / 0xF1, decompressed here by the host's zstd:
 // the same format, so the same bytes. Anything unusual (a dictionary, an error, a huge buffer)

@@ -62,6 +62,8 @@ struct BuiltinPatch {
     std::span<const BuiltinPatchRecord> records;
     size_t state_offset = 0;
     size_t state_size = 0;
+    /// Patches nothing: the tick box is a setting the emulator reads (Settings::copy_chain_addon).
+    bool runtime_flag = false;
 };
 
 constexpr std::array<u8, 4> MAX_RESOLUTION_ORIGINAL{0xE8, 0x41, 0x00, 0x36};
@@ -118,6 +120,16 @@ constexpr std::array BUILTIN_PATCHES{
         .records = DYNAMIC_FPS_RECORDS,
         .state_offset = 0x4E9FE00,
         .state_size = 16,
+    },
+    // Vulkan buffer cache: back-to-back barriered upload copies share one leading barrier
+    // (BufferCacheRuntime::CopyBuffer). Costs no game code; the tick box is read at game start.
+    BuiltinPatch{
+        .name = "Copy Chain (built-in)",
+        .title_id = 0x0400486024DEC000,
+        .module = "main",
+        .build_id = "",
+        .records = {},
+        .runtime_flag = true,
     },
     BuiltinPatch{
         .name = "Native zstd (built-in)",
@@ -544,8 +556,18 @@ std::vector<u8> PatchManager::PatchNSO(const std::vector<u8>& nso, const std::st
     }
 
     const auto disabled = GetDisabledAddons();
+    if (name == "main") {
+        Settings::copy_chain_addon.store(false, std::memory_order_relaxed);
+    }
     for (const auto& patch : BUILTIN_PATCHES) {
         if (patch.title_id != title_id || patch.module != name) {
+            continue;
+        }
+        if (patch.runtime_flag) {
+            const bool on = std::find(disabled.cbegin(), disabled.cend(), patch.name) ==
+                            disabled.cend();
+            Settings::copy_chain_addon.store(on, std::memory_order_relaxed);
+            LOG_INFO(Loader, "    - Add-On \"{}\": {}", patch.name, on ? "on" : "off");
             continue;
         }
         if (std::find(disabled.cbegin(), disabled.cend(), patch.name) != disabled.cend()) {

@@ -179,6 +179,8 @@ struct InstanceDispatch {
     PFN_vkEnumerateDeviceExtensionProperties vkEnumerateDeviceExtensionProperties{};
     PFN_vkEnumeratePhysicalDevices vkEnumeratePhysicalDevices{};
     PFN_vkGetDeviceProcAddr vkGetDeviceProcAddr{};
+    PFN_vkGetPhysicalDeviceCooperativeMatrixPropertiesKHR
+        vkGetPhysicalDeviceCooperativeMatrixPropertiesKHR{};
     PFN_vkGetPhysicalDeviceFeatures2 vkGetPhysicalDeviceFeatures2{};
     PFN_vkGetPhysicalDeviceFormatProperties vkGetPhysicalDeviceFormatProperties{};
     PFN_vkGetPhysicalDeviceFormatProperties2 vkGetPhysicalDeviceFormatProperties2{};
@@ -344,6 +346,7 @@ struct DeviceDispatch : InstanceDispatch {
 #ifdef _WIN32
     PFN_vkGetMemoryWin32HandleKHR vkGetMemoryWin32HandleKHR{};
 #endif
+    PFN_vkGetDeviceFaultInfoEXT vkGetDeviceFaultInfoEXT{};
     PFN_vkGetPipelineExecutablePropertiesKHR vkGetPipelineExecutablePropertiesKHR{};
     PFN_vkGetPipelineExecutableStatisticsKHR vkGetPipelineExecutableStatisticsKHR{};
     PFN_vkGetQueryPoolResults vkGetQueryPoolResults{};
@@ -1220,6 +1223,9 @@ public:
     std::vector<VkQueueFamilyProperties> GetQueueFamilyProperties() const;
 
     std::vector<VkPhysicalDeviceToolProperties> GetPhysicalDeviceToolProperties() const;
+
+    /// Matrix shapes and types of VK_KHR_cooperative_matrix; empty when the driver lacks it.
+    std::vector<VkCooperativeMatrixPropertiesKHR> GetCooperativeMatrixPropertiesKHR() const;
 
     bool GetSurfaceSupportKHR(u32 queue_family_index, VkSurfaceKHR) const;
 

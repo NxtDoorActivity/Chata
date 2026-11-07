@@ -671,6 +671,11 @@ void Scheduler::ReportWorkTimes() {
     u32 current_run{};
     u32 compute_items{};
     std::pair<u64, u64> prev_shaders{~u64{}, ~u64{}};
+    struct TopItem {
+        double ms;
+        u32 index;
+    };
+    std::array<TopItem, 5> top_items{};
     for (u32 i = 0; i < count; ++i) {
         if (results[i * 2].available == 0 || results[i * 2 + 1].available == 0) {
             continue;
@@ -708,6 +713,10 @@ void Scheduler::ReportWorkTimes() {
                               trace_timestamp_bits)) *
                           trace_timestamp_period / 1e6;
         const WorkTrace& item = trace_work_items[i];
+        if (ms > top_items.back().ms) {
+            top_items.back() = {ms, i};
+            std::ranges::sort(top_items, std::greater<>{}, &TopItem::ms);
+        }
         {
             size_t bucket = 0;
             while (ms >= BucketLimitsMs[bucket]) {
@@ -779,6 +788,22 @@ void Scheduler::ReportWorkTimes() {
                  trace_sample_frame, count, distinct, compute_items, same_as_prev, longest_run,
                  bucket_count[0], bucket_ms[0], bucket_count[1], bucket_ms[1], bucket_count[2],
                  bucket_ms[2], bucket_count[3], bucket_ms[3], bucket_count[4], bucket_ms[4], most);
+    }
+    {
+        std::string top;
+        for (const TopItem& entry : top_items) {
+            if (entry.ms <= 0.0) {
+                break;
+            }
+            const WorkTrace& item = trace_work_items[entry.index];
+            top += item.fragment_hash == 0
+                       ? fmt::format(" s6:{:016x}", item.hash)
+                       : fmt::format(" s1:{:016x}+s5:{:016x}", item.hash, item.fragment_hash);
+            top += fmt::format("={:.3f}ms@{}/{}(size {}x{}x{})", entry.ms, entry.index, count,
+                               item.size[0], item.size[1], item.size[2]);
+        }
+        LOG_INFO(Render_Vulkan, "DKB top_items renderer_frame={} slowest_items:{}",
+                 trace_sample_frame, top);
     }
     std::string kinds;
     for (size_t k = 0; k < NumKinds; ++k) {

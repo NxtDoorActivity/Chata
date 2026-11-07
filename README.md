@@ -18,6 +18,8 @@ Chata is an experimental, open-source Nintendo Switch and Switch 2 emulator writ
 This is an independent fork, not an official release of Lichii or of any of those upstream projects. Chata is not affiliated with Nintendo.
 This is an independent fork, not an official release of those upstream projects. Lichii is not affiliated with Nintendo.
 
+Visit the [official Lichii website](https://lichii.zortos.me) to find games and compare community compatibility reports.
+
 ## Downloads and setup
 
 Published builds belong on this fork's releases page.
@@ -35,7 +37,11 @@ The rebrand intentionally retains the existing Eden/Eglantine data directories a
 
 Compatibility and performance vary by game, hardware and driver. Rendering errors, stutters and crashes remain possible. Passing automated tests does not establish that a game renders correctly, and this project makes no universal frame-rate guarantee.
 
-Compatibility and performance vary by game, hardware and driver. Rendering errors, stutters and crashes remain possible. Passing automated tests does not establish that a game renders correctly, and this project makes no universal frame-rate guarantee.
+Browse [community compatibility reports](https://lichii.zortos.me/reports) for results with each player's build and setup.
+
+Desktop reporting requires a build containing [PR #303](https://github.com/zortos293/Lichii/pull/303) and is not available in build 88. In builds that include it, play and stop a Switch 2 game, then right-click that game and choose **Submit compatibility report**. Only the latest session in the current Lichii process is eligible.
+
+Confirm the matching website catalog entry and review the editable machine, game, setup, and enabled add-on details prefilled where available. Check the public preview and give explicit consent before submitting. Nothing uploads automatically, and the native v1 reporter does not read or upload logs or files.
 
 When reporting an issue, include:
 

@@ -187,6 +187,7 @@ public:
     template <typename T>
         requires std::is_invocable_v<T, vk::CommandBuffer, vk::CommandBuffer>
     void RecordWithUploadBuffer(T&& command) {
+        ++record_serial;
         if (VideoCommon::GpuSplit::check_owner) [[unlikely]] {
             VideoCommon::GpuSplit::CheckOwner("Scheduler::Record");
         }
@@ -216,6 +217,12 @@ public:
             std::this_thread::sleep_for(std::chrono::microseconds{100});
         }
         return true;
+    }
+
+    /// Counts the commands recorded so far (every Record call). Two readings that are equal mean
+    /// nothing was recorded in between.
+    [[nodiscard]] u64 RecordSerial() const noexcept {
+        return record_serial;
     }
 
     /// Returns the current command buffer tick.
@@ -513,6 +520,7 @@ private:
 
     State state;
     u64 recording_epoch = 0;
+    u64 record_serial = 0;
 
     u32 num_renderpass_images = 0;
     std::array<VkImage, 9> renderpass_images{};

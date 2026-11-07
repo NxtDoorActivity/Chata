@@ -554,7 +554,6 @@ void TraceBufferCopy(const std::source_location& loc, std::span<const VideoCommo
     static std::mutex mutex;
     static std::map<std::pair<u32, char>, CopyTraceEntry> entries;
     static auto next{std::chrono::steady_clock::now() + std::chrono::seconds{1}};
-    static u64 frames{};
     std::scoped_lock lock{mutex};
     auto& entry{entries[{loc.line(), path}]};
     entry.path = path;
@@ -589,7 +588,6 @@ void TraceBufferCopy(const std::source_location& loc, std::span<const VideoCommo
     LOG_INFO(Render_Vulkan, "COPYTRACE total_calls={} chain_skipped_barriers={} (last second):{}",
              total, g_copy_chain_skips.exchange(0, std::memory_order_relaxed), text);
     entries.clear();
-    ++frames;
 }
 } // namespace
 

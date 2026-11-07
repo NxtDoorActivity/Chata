@@ -7,6 +7,7 @@
 #include <algorithm>
 #include <array>
 #include <atomic>
+#include <cstdlib>
 #include <cstring>
 #include <limits>
 #include <optional>
@@ -1357,7 +1358,14 @@ void Maxwell3D::FrontDmaRead(VideoCommon::GpuSplit& split, FrontState& fs, u32 m
         memory_manager.ReadBlockUnsafe(source, diag_before.data(), read_bytes);
     }
     VideoCommon::Nx2Profile::CountDmaRead(macro);
-    split.Drain(VideoCommon::DrainSite::MacroDmaRead);
+    // EDEN_NX2_DMA_WRITER_WAIT=1: wait only for the compute and copy work sent so far instead of
+    // the whole queue (draws are not tracked as writers).
+    static const char* const writer_wait_env{std::getenv("EDEN_NX2_DMA_WRITER_WAIT")};
+    if (writer_wait_env != nullptr && writer_wait_env[0] != '0') {
+        split.WaitForWriters(VideoCommon::DrainSite::MacroDmaRead);
+    } else {
+        split.Drain(VideoCommon::DrainSite::MacroDmaRead);
+    }
     if (VideoCommon::QueryDma::TraceEnabled()) {
         split.Run(
             [this, macro, method, source, read_bytes] {

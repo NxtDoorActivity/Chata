@@ -11,6 +11,10 @@ name: chata-android
 
 on:
   workflow_dispatch:
+  # Temporary: lets the prototype build run from its branch before the workflow reaches nx2.
+  push:
+    branches: [chata/android-apk]
+    paths: ['.github/workflows/chata-android.yml']
 
 permissions:
   contents: read

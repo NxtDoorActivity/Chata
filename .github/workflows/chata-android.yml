@@ -48,21 +48,15 @@ jobs:
           "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" --install \
             "platforms;android-36" "build-tools;36.0.0" "ndk;28.2.13676358" "cmake;3.31.5" > /dev/null
 
-      - name: Cache CPM downloads
-        uses: actions/cache@v5
+      - name: Restore CPM downloads and compiler objects
+        uses: actions/cache/restore@v5
         with:
-          path: .cache/cpm
-          key: cpm-android-${{ hashFiles('cpmfile.json', 'CMakeLists.txt', 'src/**/CMakeLists.txt') }}
+          path: |
+            .cache/cpm
+            .ccache
+          key: android-cache-${{ github.sha }}
           restore-keys: |
-            cpm-android-
-
-      - name: Cache compiler objects
-        uses: actions/cache@v5
-        with:
-          path: .ccache
-          key: objects-android-arm64-${{ github.sha }}
-          restore-keys: |
-            objects-android-arm64-
+            android-cache-
 
       - name: Build APK
         shell: bash
@@ -74,6 +68,16 @@ jobs:
           test -n "$apk"
           cp "$apk" "$GITHUB_WORKSPACE/chata-android-arm64-${GITHUB_SHA::10}.apk"
           ccache --show-stats || true
+
+      # Saved even when the build fails, so the next attempt recompiles only what changed.
+      - name: Save CPM downloads and compiler objects
+        if: always()
+        uses: actions/cache/save@v5
+        with:
+          path: |
+            .cache/cpm
+            .ccache
+          key: android-cache-${{ github.sha }}
 
       - name: Upload APK
         uses: actions/upload-artifact@v7

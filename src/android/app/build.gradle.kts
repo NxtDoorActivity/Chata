@@ -188,7 +188,7 @@ android {
         create("mainline") {
             dimension = "version"
             isDefault = true
-            minSdk = 33
+            minSdk = 30
 
             manifestPlaceholders += mapOf("appNameBase" to "Chata")
             resValue("string", "app_name_suffixed", "Chata")

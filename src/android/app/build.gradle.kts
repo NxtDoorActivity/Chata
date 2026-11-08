@@ -190,8 +190,8 @@ android {
             isDefault = true
             minSdk = 33
 
-            manifestPlaceholders += mapOf("appNameBase" to "Eden")
-            resValue("string", "app_name_suffixed", "Eden")
+            manifestPlaceholders += mapOf("appNameBase" to "Chata")
+            resValue("string", "app_name_suffixed", "Chata")
 
             ndk {
                 abiFilters += listOf("arm64-v8a")

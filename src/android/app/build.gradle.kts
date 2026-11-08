@@ -64,7 +64,7 @@ android {
     }
 
     defaultConfig {
-        applicationId = "dev.eden.eden_emulator"
+        applicationId = "io.github.nxtdooractivity.chata"
         minSdk = 24
         targetSdk = 36
         versionName = getGitVersion()

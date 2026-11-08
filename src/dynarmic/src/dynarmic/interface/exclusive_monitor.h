@@ -22,6 +22,26 @@ namespace Dynarmic {
 using VAddr = std::uint64_t;
 using Vector = std::array<std::uint64_t, 2>;
 
+/// Stands in for AtomicVAddrRef, which the Android NDK's libc++ does not provide.
+class AtomicVAddrRef {
+public:
+    explicit AtomicVAddrRef(VAddr& value) : ref{value} {}
+
+    VAddr load(std::memory_order order) const {
+        return __atomic_load_n(&ref, static_cast<int>(order));
+    }
+    void store(VAddr value, std::memory_order order) {
+        __atomic_store_n(&ref, value, static_cast<int>(order));
+    }
+    bool compare_exchange_strong(VAddr& expected, VAddr desired, std::memory_order order) {
+        return __atomic_compare_exchange_n(&ref, &expected, desired, false, static_cast<int>(order),
+                                           __ATOMIC_RELAXED);
+    }
+
+private:
+    VAddr& ref;
+};
+
 class ExclusiveMonitor {
 public:
     /// @param processor_count Maximum number of processors using this global
@@ -39,7 +59,7 @@ public:
         const VAddr masked_address = address & RESERVATION_GRANULE_MASK;
 
 #ifdef ARCHITECTURE_arm64
-        std::atomic_ref<VAddr>{exclusive_addresses[processor_id]}.store(masked_address, std::memory_order_release);
+        AtomicVAddrRef{exclusive_addresses[processor_id]}.store(masked_address, std::memory_order_release);
         const T value = op();
         std::memcpy(exclusive_values[processor_id].data(), &value, sizeof(T));
 #else

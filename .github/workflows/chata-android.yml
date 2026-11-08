@@ -14,7 +14,7 @@ on:
   # Temporary: lets the prototype build run from its branch before the workflow reaches nx2.
   push:
     branches: [chata/android-apk]
-    paths: ['.github/workflows/chata-android.yml']
+    paths: ['.github/workflows/chata-android.yml', 'src/**']
 
 permissions:
   contents: read

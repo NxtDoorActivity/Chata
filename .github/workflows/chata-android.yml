@@ -69,6 +69,18 @@ jobs:
           cp "$apk" "$GITHUB_WORKSPACE/chata-android-arm64-${GITHUB_SHA::10}.apk"
           ccache --show-stats || true
 
+      - name: Inspect APK
+        shell: bash
+        run: |
+          BT="$ANDROID_HOME/build-tools/36.0.0"
+          apk=$(ls chata-android-arm64-*.apk | head -1)
+          ls -l "$apk"
+          sha256sum "$apk"
+          unzip -tq "$apk"
+          "$BT/apksigner" verify --verbose --print-certs "$apk" || true
+          "$BT/aapt2" dump badging "$apk" | grep -E "package:|sdkVersion|targetSdk|native-code|application-label:|launchable" || true
+          unzip -l "$apk" | grep -E "AndroidManifest|classes|lib/|META-INF" | head -30
+
       # Saved even when the build fails, so the next attempt recompiles only what changed.
       - name: Save CPM downloads and compiler objects
         if: always()

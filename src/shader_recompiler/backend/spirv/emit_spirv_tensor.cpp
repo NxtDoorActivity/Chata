@@ -3,6 +3,7 @@
 
 #include <algorithm>
 #include <array>
+#include <cstdlib>
 #include <optional>
 #include <span>
 #include <vector>
@@ -229,6 +230,10 @@ void DefineSoftwareMatrixFunctions(EmitContext& ctx, const IR::Program& program)
             needed[depth == 16] = true;
         }
     }
+    static const bool fast_round{[] {
+        const char* const value{std::getenv("EDEN_NX2_TENSOR_FAST_ROUND")};
+        return value != nullptr && value[0] != '0';
+    }()};
     for (u32 variant = 0; variant < 2; ++variant) {
         if (!needed[variant]) continue;
         ctx.AddCapability(spv::Capability::GroupNonUniform);
@@ -317,8 +322,13 @@ void DefineSoftwareMatrixFunctions(EmitContext& ctx, const IR::Program& program)
                 }
             }
             // HMMA.F16 rounds after each K=8 group, including the midpoint of K=16.
-            for (const Id accumulator : accumulators)
-                ctx.OpStore(accumulator, round_half(ctx.OpLoad(f32ty, accumulator)));
+            // EDEN_NX2_TENSOR_FAST_ROUND=1 skips these (the final pack still rounds once): less
+            // ALU work for the neural-network pass on GPUs without matrix units, at the cost of
+            // bit-exact intermediate rounding.
+            if (!fast_round) {
+                for (const Id accumulator : accumulators)
+                    ctx.OpStore(accumulator, round_half(ctx.OpLoad(f32ty, accumulator)));
+            }
         };
         if (variant == 0) {
             emit_group([](Id low, Id) { return low; });
